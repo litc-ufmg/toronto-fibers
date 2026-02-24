@@ -358,12 +358,12 @@ def process_blocks(raw_tiff_img, binary_threshold, grid=(2,2,2), overlap=8,
 
 def main():
     # Image options:
-    #   "./fiber_img/data/PPGF40.tif"
-    #   "./fiber_img/data/PPGF40HNT0-1.0.tif"
-    #   "./fiber_img/data/PPGF40HNT0-1.5.tif"
-    #   "./fiber_img/data/PPGF40HNT0-5.tif"
+    #   "./data/data/PPGF40.tif"
+    #   "./data/data/PPGF40HNT0-1.0.tif"
+    #   "./data/data/PPGF40HNT0-1.5.tif"
+    #   "./data/data/PPGF40HNT0-5.tif"
 
-    filename = "./fiber_img/data/PPGF40HNT0-1.0.tif"
+    filename = "./data/data/PPGF40HNT0-1.0.tif"
     raw_tiff_img = tifffile.imread(filename)
 
     # Converting to 8bits gray scale

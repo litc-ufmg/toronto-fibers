@@ -1,5 +1,3 @@
-fiber_img/
-img_res/
-metric_plots/
-resultados/
-teste.py
+data/
+csv_metrics/
+results/

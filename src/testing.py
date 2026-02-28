@@ -3,6 +3,7 @@ import numpy as np
 from skimage.filters import threshold_otsu
 from skimage.morphology import skeletonize
 import tifffile
+from  scipy.ndimage import binary_opening, binary_closing
 
 # Import your custom modules
 # Note: 'import io' can sometimes conflict with Python's standard 'io' library. 
@@ -52,6 +53,10 @@ def run_pipeline(image_path=None, subcube_size=None):
             z_start = max(0, (d - subcube_size) // 2)
             y_start = max(0, (h - subcube_size) // 2)
             x_start = max(0, (w - subcube_size) // 2)
+
+            # z_start = max(0, subcube_size)
+            # y_start = max(0, subcube_size)
+            # x_start = max(0, subcube_size)
             
             # Calculate ending indices
             z_end = min(d, z_start + subcube_size)
@@ -76,6 +81,7 @@ def run_pipeline(image_path=None, subcube_size=None):
 
     # 3. SKELETONIZATION
     print("[3/5] Extracting 3D skeleton...")
+    binary_image = binary_opening(binary_image)
     skeleton_3d = skeletonize(binary_image)
     print(f"      - Skeletonization complete. Skeleton voxels: {np.sum(skeleton_3d)}")
 
@@ -83,6 +89,8 @@ def run_pipeline(image_path=None, subcube_size=None):
     print("[4/5] Analyzing junctions and pruning branches...")
     # Assuming prune_branches_by_angle modifies the skeleton in-place or returns it.
     # Make sure this matches your analysis.py exact signature.
+    for _ in range(3):
+        skeleton_3d = analysis.filter_skeleton(skeleton_3d, 5)
     pruned_skeleton = analysis.prune_skeleton(skeleton_3d)
     
     # 5. SEGMENTATION
@@ -103,12 +111,16 @@ def run_pipeline(image_path=None, subcube_size=None):
 
 if __name__ == "__main__":
     # To test with a real file, replace this with your file path:
-    # e.g., sample_path = "C:/data/my_heavy_microct_scan.tif"
-    sample_path = "data/PPGF40.tif" 
+    paths = ["data/PPGF40.tif",
+             "data/PPGF40HNT0-1.0.tif",
+             "data/PPGF40HNT0-1.5.tif",
+             "data/PPGF40HNT0-5.tif",
+             ]
+    sample_path = paths[0]
     
     # Set subcube_size to an integer (e.g., 100 or 200) to test a small chunk of your .tif
     # Set to None to process the whole image.
-    test_cube_size = 150 
+    test_cube_size = 150
     
     cropped_vol, binary_mask, pruned_skel, final_labels = run_pipeline(sample_path, subcube_size=test_cube_size)
     

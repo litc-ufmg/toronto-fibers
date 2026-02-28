@@ -70,83 +70,166 @@ def best_straight_pair(vectors):
     ang = np.degrees(np.arccos(np.clip(cos[i, j], -1, 1)))
     return (i, j, ang)
 
-def filter_skeleton(skeleton_3d_img, tam_min):
+def calculate_branch_direction(path_coords, junction_coords, num_voxels=10):
     """
-    Removes small branches (spurs) from the skeleton that are not connected 
-    between two junction points (J-J branches are preserved).
+    Calculates the true trajectory of a branch by fitting a 3D line 
+    to the first 'num_voxels' using Singular Value Decomposition (SVD).
+    This smooths out the jagged 'staircase' effect of 3D voxels.
+    """
+    # Ensure the path is ordered moving AWAY from the junction
+    if not np.array_equal(path_coords[0], junction_coords):
+        path_coords = path_coords[::-1] # Reverse if it starts at the other end
+        
+    # Take a segment of the branch (up to num_voxels, but bounded by branch length)
+    segment = path_coords[:num_voxels]
+    
+    if len(segment) < 2:
+        return np.array([0.0, 0.0, 0.0])
+        
+    # Center the segment points around their mean
+    centered = segment - np.mean(segment, axis=0)
+    
+    # Use SVD to find the principal axis (line of best fit)
+    _, _, vh = np.linalg.svd(centered)
+    direction = vh[0] 
+    
+    # SVD might point the vector inwards or outwards. 
+    # We force it to point AWAY from the junction.
+    vec_to_end = segment[-1] - segment[0]
+    if np.dot(direction, vec_to_end) < 0:
+        direction = -direction
+        
+    # Normalize the vector
+    norm = np.linalg.norm(direction)
+    if norm == 0:
+        return direction
+    return direction / norm
+
+def filter_skeleton(skeleton_3d_img, tam_min=5, remove_isolated=True, isolated_min=15):
+    """
+    Removes small noise artifacts from the skeleton.
+    Filters out short spurs (Junction-to-Endpoint) and floating debris (Endpoint-to-Endpoint).
     
     Args:
         skeleton_3d_img (np.ndarray): 3D boolean skeleton image.
-        tam_min (int): Minimum length (in voxels) for a branch to be kept.
+        tam_min (int): Minimum length (in voxels) for a spur to be kept.
+        remove_isolated (bool): If True, also removes small floating skeleton pieces.
+        isolated_min (int): Minimum length for an isolated branch to be kept.
         
     Returns:
         np.ndarray: Filtered skeleton image.
     """
     print("------------FILTERING THE SKELETON----------")
-    print(f"     - Removing branches with {tam_min} or less voxels.")
-    
-    # Copying the original skeleton to avoid modifying the input in-place
     _skeleton_3d = skeleton_3d_img.copy()
     skeleton_obj = Skeleton(_skeleton_3d)
 
-    # Getting the skeleton information as a DataFrame
+    # Getting the skeleton information
     summary = summarize(skeleton_obj, separator='-')
 
-    # Getting the junction points (nodes with degree >= 3)
-    junction_points_ids = np.where(skeleton_obj.degrees >= 3)[0]
+    n_spurs_rm = 0
+    n_iso_rm = 0
 
-    print(f"     - {len(junction_points_ids)} junction points found.")
+    # Iterate over all branches efficiently using the summary dataframe
+    for branch_id, branch in summary.iterrows():
+        branch_voxels = skeleton_obj.path_coordinates(branch_id)
+        branch_len = len(branch_voxels)
+        branch_type = branch['branch-type']
 
-    n_rm = 0
-
-    # Iterate through the junction points
-    for junction_id in junction_points_ids:
-
-        # Get the branches connected to the current junction point
-        connected_branches = summary[(summary['node-id-src'] == junction_id) | (summary['node-id-dst'] == junction_id)]
-
-        # Iterate over connected branches
-        for _, branch in connected_branches.iterrows():
-            branch_id = int(branch.name)
-            branch_voxels = skeleton_obj.path_coordinates(branch_id)
-            branch_len = len(branch_voxels)
-
-            # Classify the extreme nodes of the branch (Source and Destination)
+        # Type 1: SPUR (Junction-to-Endpoint)
+        if branch_type == 1 and branch_len <= tam_min:
+            # We must identify which end is the junction to preserve it
             src = int(branch['node-id-src'])
-            dst = int(branch['node-id-dst'])
+            deg_src = skeleton_obj.degrees[src]
             
-            deg_src = int(skeleton_obj.degrees[src])
-            deg_dst = int(skeleton_obj.degrees[dst])
-            
-            # Check connection types:
-            # is_jj: Junction-to-Junction connection
-            # is_je: Junction-to-Endpoint connection (Spur)
-            is_jj = (deg_src >= 3 and deg_dst >= 3)
-            is_je = ((deg_src >= 3 and deg_dst == 1) or (deg_dst >= 3 and deg_src == 1))
+            # If the source node is the junction, keep the first voxel [1:]
+            # If the destination node is the junction, keep the last voxel [:-1]
+            if deg_src >= 3:
+                z, y, x = branch_voxels[1:].T
+            else:
+                z, y, x = branch_voxels[:-1].T
+                
+            _skeleton_3d[z, y, x] = False
+            n_spurs_rm += 1
 
-            # Remove only short Junction-to-Endpoint (spur) branches
-            if branch_len <= tam_min and is_je and not is_jj:
-                n_rm += 1
-                # Set voxels to False (0), removing them from skeleton
-                # We skip the first voxel [1:] to preserve the junction node itself
-                z, y, x = branch_voxels[1:].T  
-                _skeleton_3d[z, y, x] = False
-        
-    print(f"     - {n_rm} branches removed.")
+        # Type 0: ISOLATED DEBRIS (Endpoint-to-Endpoint)
+        elif remove_isolated and branch_type == 0 and branch_len <= isolated_min:
+            # Delete the entire branch (no junctions to preserve)
+            z, y, x = branch_voxels.T
+            _skeleton_3d[z, y, x] = False
+            n_iso_rm += 1
+
+    print(f"     - {n_spurs_rm} spurs (<= {tam_min} voxels) removed.")
+    if remove_isolated:
+        print(f"     - {n_iso_rm} isolated branches (<= {isolated_min} voxels) removed.")
     print("------------FILTERING ENDED---------------\n")
     
     return _skeleton_3d
 
-def prune_skeleton(skeleton_3d_img, local_search=True, local_range=5):
+def find_continuous_pairs(vectors, branches_ids, min_angle=75.0):
+    """
+    Iteratively finds valid pairs of branches at a junction. 
+    Unlike looking for a single 'best' pair, this allows multiple 
+    intersecting fibers (e.g. an X-crossing) to pass through intact.
+    
+    Args:
+        vectors (list of np.ndarray): Direction vectors of the branches.
+        branches_ids (list of int): IDs of the branches.
+        min_angle (float): The minimum angle (in degrees) required to consider two branches continuous.
+        
+    Returns:
+        tuple: (paired_branches, branches_to_prune)
+    """
+    paired_branches = []
+    unpaired_indices = list(range(len(vectors)))
+    
+    # Keep finding pairs as long as we have at least 2 branches left
+    while len(unpaired_indices) >= 2:
+        best_ang = -1
+        best_pair_idx = None
+        
+        # Check all combinations of currently UNPAIRED branches
+        for i in range(len(unpaired_indices)):
+            for j in range(i + 1, len(unpaired_indices)):
+                idx1 = unpaired_indices[i]
+                idx2 = unpaired_indices[j]
+                
+                dot_product = np.clip(np.dot(vectors[idx1], vectors[idx2]), -1.0, 1.0)
+                ang = np.degrees(np.arccos(dot_product))
+                
+                if ang > best_ang:
+                    best_ang = ang
+                    best_pair_idx = (i, j) # Store their positions in the unpaired_indices list
+        
+        # If the best remaining pair meets the threshold, lock them in
+        if best_ang >= min_angle:
+            orig_idx1 = unpaired_indices[best_pair_idx[0]]
+            orig_idx2 = unpaired_indices[best_pair_idx[1]]
+            paired_branches.append((branches_ids[orig_idx1], branches_ids[orig_idx2]))
+            
+            # Remove them from the unpaired pool (pop highest index first to avoid shifting)
+            unpaired_indices.pop(best_pair_idx[1])
+            unpaired_indices.pop(best_pair_idx[0])
+        else:
+            # No remaining combinations form a valid straight-ish line
+            break
+            
+    # Any branches left in the unpaired list are the ones we need to disconnect!
+    branches_to_prune = [branches_ids[idx] for idx in unpaired_indices]
+    return paired_branches, branches_to_prune
+
+
+def prune_skeleton(skeleton_3d_img, local_search=True, local_range=12, min_angle=75.0, retraction_dist=4):
     """
     Prunes the skeleton by analyzing continuity at junction points. 
-    It keeps the pair of branches that form the straightest line and removes the others.
+    It iteratively pairs branches that form continuous lines and prunes the rest.
     
     Args:
         skeleton_3d_img (np.ndarray): 3D boolean skeleton image.
-        local_search (bool): If True, uses local direction vectors (near the junction). 
+        local_search (bool): If True, uses local direction vectors (PCA fitted line). 
                              If False, uses global vectors (junction to endpoint).
-        local_range (int): Distance in voxels to calculate the local vector.
+        local_range (int): Number of voxels to use for the PCA line fitting.
+        min_angle (float): Threshold angle to accept two branches as continuous.
+        retraction_dist (int): Number of voxels to delete when pruning, to pull the stub away from the junction.
         
     Returns:
         np.ndarray: Pruned skeleton image.
@@ -180,68 +263,43 @@ def prune_skeleton(skeleton_3d_img, local_search=True, local_range=5):
         branches_ids = []
         
         for _, branch in connected_branches.iterrows():
+            branch_id = int(branch.name)
             
             # Determine the vector for this branch
             if local_search:
-                branch_voxels = skeleton_obj.path_coordinates(int(branch.name))
-                len_branch = len(branch_voxels)
-
-                # Localize the start/end of the branch relative to the junction point
-                if branch['node-id-src'] == junction_id:  
-                    # Junction is the start of the branch
-                    if len_branch > local_range:
-                        other_coords = branch_voxels[local_range]
-                    else:
-                        other_node_id = branch['node-id-dst']
-                        other_coords = skeleton_obj.coordinates[int(other_node_id)]
-                else: 
-                    # Junction is the end of the branch
-                    if len_branch > local_range:
-                        other_coords = branch_voxels[-(local_range-1)]
-                    else:
-                        other_node_id = branch['node-id-src']
-                        other_coords = skeleton_obj.coordinates[int(other_node_id)]
+                branch_voxels = skeleton_obj.path_coordinates(branch_id)
+                vec = calculate_branch_direction(branch_voxels, junction_coords, num_voxels=local_range)
             else:
-                # Global search: use the other endpoint of the branch
                 other_node_id = branch['node-id-dst'] if branch['node-id-src'] == junction_id else branch['node-id-src']
                 other_coords = skeleton_obj.coordinates[int(other_node_id)]
+                vec = dir_vec(junction_coords, other_coords)
 
-            vectors.append(dir_vec(junction_coords, other_coords))
-            branches_ids.append(int(branch.name))
+            vectors.append(vec)
+            branches_ids.append(branch_id)
         
-        # Find the best pair of branches (closest to straight line)
-        i, j, ang = best_straight_pair(vectors)
+        # --- NEW LOGIC: Find all valid pairs dynamically ---
+        paired_branches, branches_to_prune = find_continuous_pairs(vectors, branches_ids, min_angle=min_angle)
 
-        # If the best angle is valid (e.g., > 90 degrees implies some continuity, 
-        # though ideally close to 180), we prune the others.
-        if ang > 90:
-            # Identify the branch to prune (the one NOT in the best pair)
-            # Note: This logic assumes exactly 3 branches. If >3, might need adjustment.
-            # Here we select the first one that is not i or j.
-            branch_to_prune = int(np.delete(branches_ids, [i, j])[0])
-
+        # Disconnect ONLY the branches that failed to find a continuous partner
+        # by retracting them away from the junction volume
+        for branch_to_prune in branches_to_prune:
             branch_to_prune_voxels = skeleton_obj.path_coordinates(branch_to_prune)
 
-            # Determine which voxel to set to zero to disconnect the branch
+            # Determine how many voxels to remove (ensure we don't delete the whole branch)
+            dist = min(retraction_dist, len(branch_to_prune_voxels) - 2)
+            dist = max(1, dist) # Always remove at least 1 voxel to break the connection
+
+            # Slice the voxels we want to delete depending on which end is connected to the junction
             if np.array_equal(branch_to_prune_voxels[0], junction_coords):
-                coords_to_set_zero = tuple(branch_to_prune_voxels[1])
+                voxels_to_remove = branch_to_prune_voxels[1 : 1 + dist]
             else:
-                coords_to_set_zero = tuple(branch_to_prune_voxels[-2])
-            
-            # Disconnect the branch
-            _skeleton_3d[coords_to_set_zero] = 0
-
-        else:
-            # If no pair forms a good line (all angles <= 90), prune ALL branches
-            # connected to this junction (it's likely a noise artifacts or knot)
-            for branch_to_prune in branches_ids:
-                branch_to_prune_voxels = skeleton_obj.path_coordinates(branch_to_prune)
-
-                if np.array_equal(branch_to_prune_voxels[0], junction_coords):
-                    coords_to_set_zero = tuple(branch_to_prune_voxels[1])
+                if dist == 1:
+                    voxels_to_remove = branch_to_prune_voxels[-2:-1]
                 else:
-                    coords_to_set_zero = tuple(branch_to_prune_voxels[-2])
+                    voxels_to_remove = branch_to_prune_voxels[-(1 + dist) : -1]
             
-                _skeleton_3d[coords_to_set_zero] = 0
-    
+            # Set all selected voxels to 0
+            for voxel in voxels_to_remove:
+                _skeleton_3d[tuple(voxel)] = 0
+            
     return _skeleton_3d

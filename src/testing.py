@@ -111,32 +111,61 @@ def run_pipeline(image_path=None, subcube_size=None):
 
 if __name__ == "__main__":
     # To test with a real file, replace this with your file path:
-    paths = ["data/PPGF40.tif",
-             "data/PPGF40HNT0-1.0.tif",
-             "data/PPGF40HNT0-1.5.tif",
-             "data/PPGF40HNT0-5.tif",
-             ]
-    sample_path = paths[0]
+    paths = [
+        "data/PPGF40.tif",
+        "data/PPGF40HNT0-1.0.tif",
+        "data/PPGF40HNT0-1.5.tif",
+        "data/PPGF40HNT0-5.tif",
+    ]
+    sample_path = paths[1]
     
     # Set subcube_size to an integer (e.g., 100 or 200) to test a small chunk of your .tif
     # Set to None to process the whole image.
-    test_cube_size = 150
+    test_cube_size = 200
     
-    cropped_vol, binary_mask, pruned_skel, final_labels = run_pipeline(sample_path, subcube_size=test_cube_size)
+    cropped_vol, binary_mask, pruned_skeleton, final_labels = run_pipeline(sample_path, subcube_size=test_cube_size)
     
     # Ensure the output directory exists
     output_dir = "./results/fiber_img/3d-res"
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, "labeled_fibers.tif")
     
-    # Save the labeled result as a TIF file
-    # Note: I used uint16 instead of uint8 so you don't lose data if you have more than 255 fibers!
-    print(f"Saving segmented fibers to {output_path}...")
-    tifffile.imwrite(output_path, final_labels.astype(np.uint16))
+    # Define file paths for all matrices
+    out_labels_path = os.path.join(output_dir, "labeled_fibers_test.tif")
+    out_crop_path = os.path.join(output_dir, "cropped_vol_test.tif")
+    out_mask_path = os.path.join(output_dir, "binary_mask_test.tif")
+    out_skel_path = os.path.join(output_dir, "pruned_skel_test.tif")
     
-    # Print the PowerShell command for the user
+    # Save the matrices as TIF files
+    # final_labels is saved as uint16 to support > 255 fibers
+    print(f"Saving segmented fibers to {out_labels_path}...")
+    tifffile.imwrite(out_labels_path, final_labels.astype(np.uint16))
+    
+    print(f"Saving cropped volume to {out_crop_path}...")
+    tifffile.imwrite(out_crop_path, cropped_vol.astype(np.uint8))
+    
+    # Boolean arrays (True/False) are multiplied by 255 and cast to uint8 for easy viewing in Napari
+    print(f"Saving binary mask to {out_mask_path}...")
+    tifffile.imwrite(out_mask_path, (binary_mask.astype(np.uint8) * 255))
+    
+    print(f"Saving pruned skeleton to {out_skel_path}...")
+    tifffile.imwrite(out_skel_path, (pruned_skeleton.astype(np.uint8) * 255))
+    
+    # Print the PowerShell commands for the user
+    # Using 'r' (raw string) so Python doesn't treat \U or \H as escape characters
     print("\n=======================================================================")
     print("To visualize the results in Napari, run the following command in PowerShell:")
-    print("scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/labeled_fibers.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res")
-    print("napari data/3d-res/labeled_fibers.tif --layer-type labels")
+    print("scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/labeled_fibers_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res")
+    print("napari data/3d-res/labeled_fibers_test.tif --layer-type labels")
+    print("=======================================================================")
+    print("To visualize the cropped volume in Napari, run the following command in PowerShell:")
+    print("scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/cropped_vol_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res")
+    print("napari data/3d-res/cropped_vol_test.tif")
+    print("=======================================================================")
+    print("To visualize the binary image in Napari, run the following command in PowerShell:")
+    print("scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/binary_mask_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res")
+    print("napari data/3d-res/binary_mask_test.tif --layer-type labels")
+    print("=======================================================================")
+    print("To visualize the prunned skeleton in Napari, run the following command in PowerShell:")
+    print("scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/pruned_skel_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res")
+    print("napari data/3d-res/pruned_skel_test.tif")
     print("=======================================================================\n")

@@ -21,6 +21,7 @@ import tifffile
 from scipy.ndimage import binary_opening
 
 import utils.io as custom_io
+import utils.metrics as metrics
 import utils.preprocessing as prep
 import utils.segmentation as seg2d
 import utils.reconstruction as recon
@@ -131,7 +132,7 @@ if __name__ == "__main__":
         "data/PPGF40HNT0-1.5.tif",
         "data/PPGF40HNT0-5.tif",
     ]
-    sample_path = paths[1]
+    sample_path = paths[0]
 
     # Cube edge length for the central sub-volume. Set to None for full image.
     cube_edge = 200
@@ -165,6 +166,17 @@ if __name__ == "__main__":
 
     print(f"Saving binary mask to {out_mask_path}...")
     tifffile.imwrite(out_mask_path, (binary_mask.astype(np.uint8) * 255))
+
+    print("Computing per-fiber metrics and histograms...")
+    metric_outputs = metrics.analyze_and_save(
+        global_labels,
+        output_dir,
+        prefix="labeled_fibers_2d_global",
+        voxel_size=(1.0, 1.0, 1.0),
+    )
+    print(f"Saved metrics CSV to {metric_outputs['csv_path']}")
+    print(f"Saved length histogram to {metric_outputs['length_hist_path']}")
+    print(f"Saved orientation histogram to {metric_outputs['orientation_hist_path']}")
 
     print("\n=======================================================================")
     print("Open the global labels in Napari with:")

@@ -23,6 +23,58 @@ def _branch_angle(j_coords, other_coords):
     return np.degrees(np.arctan2(-dy, dx))
 
 
+def _filter_short_branches(skeleton_img, min_branch_length=5):
+    """
+    Removes JP--EP and EP--EP branches shorter than *min_branch_length* pixels
+    before orientation pruning. JP--JP branches are never removed: a short
+    junction-to-junction segment may be a genuine fiber section where two
+    junction pixels happen to lie in close proximity, and deleting it would
+    introduce spurious breaks in the skeleton topology.
+
+    Args:
+        skeleton_img (np.ndarray): 2D binary skeleton image.
+        min_branch_length (int): Branches of type JP--EP or EP--EP with fewer
+            than this many pixels are removed. Default is 5.
+
+    Returns:
+        np.ndarray: Filtered 2D skeleton image.
+    """
+    skeleton_obj = Skeleton(skeleton_img)
+    summary = summarize(skeleton_obj, separator="-")
+
+    if summary.shape[0] == 0:
+        return np.copy(skeleton_img)
+
+    filtered = np.copy(skeleton_img)
+
+    for idx, branch in summary.iterrows():
+        branch_type = int(branch["branch-type"])
+        # branch-type: 0=EP-EP, 1=JP-EP, 2=JP-JP, 3=cycle
+        if branch_type == 2:  # JP-JP: never filter
+            continue
+
+        path_coords = skeleton_obj.path_coordinates(int(idx))
+        if len(path_coords) >= min_branch_length:
+            continue
+
+        if branch_type == 0:  # EP-EP: zero every pixel
+            for coord in path_coords:
+                filtered[int(coord[0]), int(coord[1])] = 0
+        else:  # JP-EP (type 1): zero all pixels except the junction end
+            src_id = int(branch["node-id-src"])
+            src_is_junction = skeleton_obj.degrees[src_id] >= 3
+            if src_is_junction:
+                # path[0] is the junction pixel — preserve it
+                for coord in path_coords[1:]:
+                    filtered[int(coord[0]), int(coord[1])] = 0
+            else:
+                # path[-1] is the junction pixel — preserve it
+                for coord in path_coords[:-1]:
+                    filtered[int(coord[0]), int(coord[1])] = 0
+
+    return filtered
+
+
 def prune_skeleton_by_orientation(
     skeleton_img,
     max_angle_deviation=45,
@@ -147,6 +199,7 @@ def segment_fibers_2d(
     max_angle_deviation=45,
     remove_small_skeletons=True,
     min_skeleton_size=20,
+    min_branch_length=5,
     local_analysis=True,
     local_range=20,
 ):
@@ -155,10 +208,11 @@ def segment_fibers_2d(
 
     Steps:
         1. Skeletonize the binary mask.
-        2. Prune skeleton junctions using orientation continuity.
-        3. Label the disconnected skeleton components.
-        4. Optionally drop tiny skeleton fragments.
-        5. Expand the labels back to the full fiber area with watershed.
+        2. Remove short JP--EP and EP--EP branches (artefacts).
+        3. Prune skeleton junctions using orientation continuity.
+        4. Label the disconnected skeleton components.
+        5. Optionally drop tiny skeleton fragments.
+        6. Expand the labels back to the full fiber area with watershed.
 
     Args:
         binary_img (np.ndarray): 2D binary mask of the fibers.
@@ -167,6 +221,9 @@ def segment_fibers_2d(
         remove_small_skeletons (bool): Drop skeleton components below
             ``min_skeleton_size`` after pruning.
         min_skeleton_size (int): Minimum skeleton size in pixels.
+        min_branch_length (int): JP--EP and EP--EP branches shorter than this
+            are removed before orientation pruning. JP--JP branches are never
+            removed. Default is 5.
         local_analysis (bool): Use local direction at the junction.
         local_range (int): Pixel offset for the local direction estimate.
 
@@ -174,6 +231,7 @@ def segment_fibers_2d(
         tuple: (labeled_fibers, labeled_skeleton)
     """
     skeleton = skeletonize(binary_img)
+    skeleton = _filter_short_branches(skeleton, min_branch_length=min_branch_length)
     pruned = prune_skeleton_by_orientation(
         skeleton,
         max_angle_deviation=max_angle_deviation,
@@ -197,6 +255,7 @@ def segment_volume_slicewise(
     max_angle_deviation=45,
     remove_small_skeletons=True,
     min_skeleton_size=20,
+    min_branch_length=5,
     local_analysis=True,
     local_range=20,
     verbose=True,
@@ -210,7 +269,8 @@ def segment_volume_slicewise(
         binary_volume (np.ndarray): 3D binary mask with shape (Z, Y, X).
         axis (str): Slicing axis ('x', 'y' or 'z').
         max_angle_deviation, remove_small_skeletons, min_skeleton_size,
-        local_analysis, local_range: forwarded to ``segment_fibers_2d``.
+        min_branch_length, local_analysis, local_range: forwarded to
+        ``segment_fibers_2d``.
         verbose (bool): If True, prints a tqdm progress bar.
 
     Returns:
@@ -248,6 +308,7 @@ def segment_volume_slicewise(
             max_angle_deviation=max_angle_deviation,
             remove_small_skeletons=remove_small_skeletons,
             min_skeleton_size=min_skeleton_size,
+            min_branch_length=min_branch_length,
             local_analysis=local_analysis,
             local_range=local_range,
         )

@@ -3,7 +3,7 @@ import numpy as np
 from skimage.filters import threshold_otsu
 from skimage.morphology import skeletonize
 import tifffile
-from  scipy.ndimage import binary_opening, binary_closing
+from scipy.ndimage import binary_opening
 
 # Import your custom modules
 # Note: 'import io' can sometimes conflict with Python's standard 'io' library. 
@@ -11,8 +11,8 @@ from  scipy.ndimage import binary_opening, binary_closing
 import utils.io as custom_io 
 import utils.preprocessing as prep
 import utils.analysis as analysis
+import utils.metrics as metrics
 import utils.segmentation as seg
-import utils.visualization as vis
 
 def generate_synthetic_crossing():
     """
@@ -67,7 +67,7 @@ def run_pipeline(image_path=None, subcube_size=None):
             volume = volume[z_start:z_end, y_start:y_end, x_start:x_end]
             
     else:
-        print(f"[1/5] Image path not provided or not found. Using synthetic data.")
+        print("[1/5] Image path not provided or not found. Using synthetic data.")
         volume = generate_synthetic_crossing()
 
     # 2. PREPROCESSING
@@ -149,6 +149,17 @@ if __name__ == "__main__":
     
     print(f"Saving pruned skeleton to {out_skel_path}...")
     tifffile.imwrite(out_skel_path, (pruned_skeleton.astype(np.uint8) * 255))
+
+    print("Computing per-fiber metrics and histograms...")
+    metric_outputs = metrics.analyze_and_save(
+        final_labels.astype(np.uint32),
+        output_dir,
+        prefix="labeled_fibers_3d",
+        voxel_size=(1.0, 1.0, 1.0),
+    )
+    print(f"Saved metrics CSV to {metric_outputs['csv_path']}")
+    print(f"Saved length histogram to {metric_outputs['length_hist_path']}")
+    print(f"Saved orientation histogram to {metric_outputs['orientation_hist_path']}")
     
     # Print the PowerShell commands for the user
     # Using 'r' (raw string) so Python doesn't treat \U or \H as escape characters

@@ -1,4 +1,6 @@
 data/
-csv_metrics/
 results/
-.venv/*
+__pycache__/
+*.pyc
+*.swp
+/tex

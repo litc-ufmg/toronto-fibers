@@ -23,7 +23,7 @@ def _branch_angle(j_coords, other_coords):
     return np.degrees(np.arctan2(-dy, dx))
 
 
-def _filter_short_branches(skeleton_img, min_branch_length=5):
+def _filter_short_branches(skeleton_img, min_branch_length=10):
     """
     Removes JP--EP and EP--EP branches shorter than *min_branch_length* pixels
     before orientation pruning. JP--JP branches are never removed: a short
@@ -34,7 +34,7 @@ def _filter_short_branches(skeleton_img, min_branch_length=5):
     Args:
         skeleton_img (np.ndarray): 2D binary skeleton image.
         min_branch_length (int): Branches of type JP--EP or EP--EP with fewer
-            than this many pixels are removed. Default is 5.
+            than this many pixels are removed. Default is 10.
 
     Returns:
         np.ndarray: Filtered 2D skeleton image.
@@ -79,7 +79,7 @@ def prune_skeleton_by_orientation(
     skeleton_img,
     max_angle_deviation=45,
     local_analysis=True,
-    local_range=20,
+    local_range=12,
 ):
     """
     Prunes branches at every skeleton junction by keeping the most colinear
@@ -199,9 +199,9 @@ def segment_fibers_2d(
     max_angle_deviation=45,
     remove_small_skeletons=True,
     min_skeleton_size=20,
-    min_branch_length=5,
+    min_branch_length=10,
     local_analysis=True,
-    local_range=20,
+    local_range=12,
 ):
     """
     Full 2D segmentation pipeline for a single slice.
@@ -223,7 +223,7 @@ def segment_fibers_2d(
         min_skeleton_size (int): Minimum skeleton size in pixels.
         min_branch_length (int): JP--EP and EP--EP branches shorter than this
             are removed before orientation pruning. JP--JP branches are never
-            removed. Default is 5.
+            removed. Default is 10.
         local_analysis (bool): Use local direction at the junction.
         local_range (int): Pixel offset for the local direction estimate.
 
@@ -240,9 +240,9 @@ def segment_fibers_2d(
     )
 
     labeled_skeleton = label(pruned, connectivity=2)
-    if remove_small_skeletons:
+    if remove_small_skeletons and min_skeleton_size > 1:
         labeled_skeleton = remove_small_objects(
-            labeled_skeleton, min_size=min_skeleton_size
+            labeled_skeleton, max_size=min_skeleton_size - 1
         )
 
     labeled_fibers = label_fibers_watershed_2d(binary_img, labeled_skeleton)
@@ -255,9 +255,9 @@ def segment_volume_slicewise(
     max_angle_deviation=45,
     remove_small_skeletons=True,
     min_skeleton_size=20,
-    min_branch_length=5,
+    min_branch_length=10,
     local_analysis=True,
-    local_range=20,
+    local_range=12,
     verbose=True,
 ):
     """

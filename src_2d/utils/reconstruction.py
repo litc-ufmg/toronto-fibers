@@ -23,6 +23,7 @@ Strategy
 """
 
 import numpy as np
+from scipy.ndimage import label as cc_label
 
 
 def _iter_slices(volume, axis):
@@ -61,9 +62,37 @@ def _relabel_sequential(slice_2d, next_id):
     return out, mapping, next_id
 
 
+def _augment_with_unlabeled_components(slice_labels, foreground_slice):
+    """
+    Adds temporary local labels to foreground connected components that are
+    still unlabeled (value 0) in a 2D slice.
+
+    This allows unlabeled remnants from the 2D stage to participate in the
+    same overlap-based propagation logic as regular labeled components.
+    """
+    if foreground_slice is None:
+        return slice_labels.astype(np.uint32, copy=False)
+
+    augmented = slice_labels.astype(np.uint32, copy=True)
+    unlabeled_fg = np.asarray(foreground_slice, dtype=bool) & (augmented == 0)
+    if not np.any(unlabeled_fg):
+        return augmented
+
+    # 8-connectivity in 2D to match the slicewise labeling behavior.
+    structure = np.ones((3, 3), dtype=np.uint8)
+    components, n_comp = cc_label(unlabeled_fg, structure=structure)
+    next_local_id = int(augmented.max()) + 1
+    for cid in range(1, n_comp + 1):
+        augmented[components == cid] = next_local_id
+        next_local_id += 1
+
+    return augmented
+
+
 def propagate_labels(
     labeled_volume,
     axis="z",
+    foreground_mask=None,
     min_overlap=1,
     min_overlap_ratio=0.0,
     verbose=True,
@@ -77,6 +106,10 @@ def propagate_labels(
             ``segment_volume_slicewise``).
         axis (str): Slicing axis used during the 2D segmentation
             ('x', 'y' or 'z').
+        foreground_mask (np.ndarray | None): Optional 3D binary/boolean mask
+            of the fiber foreground. When provided, connected components in
+            foreground voxels that are unlabeled in ``labeled_volume`` are
+            also propagated and receive global IDs.
         min_overlap (int): Minimum number of overlapping pixels required to
             inherit a previous label.
         min_overlap_ratio (float): Minimum overlap relative to the smaller of
@@ -88,11 +121,18 @@ def propagate_labels(
     """
     if labeled_volume.ndim != 3:
         raise ValueError("labeled_volume must be a 3D array.")
+    if foreground_mask is not None:
+        if foreground_mask.shape != labeled_volume.shape:
+            raise ValueError("foreground_mask must have the same shape as labeled_volume.")
 
     out = np.zeros(labeled_volume.shape, dtype=np.uint32)
     next_id = 1
 
     slice_iter = list(_iter_slices(labeled_volume, axis))
+    if foreground_mask is not None:
+        fg_iter = list(_iter_slices(foreground_mask, axis))
+    else:
+        fg_iter = None
 
     if verbose:
         from tqdm import tqdm
@@ -103,22 +143,26 @@ def propagate_labels(
 
     # Initialize with the first non-empty slice
     first_idx, first_slice = slice_iter[0]
-    first_global, _, next_id = _relabel_sequential(first_slice, next_id)
+    first_fg = fg_iter[0][1] if fg_iter is not None else None
+    first_augmented = _augment_with_unlabeled_components(first_slice, first_fg)
+    first_global, _, next_id = _relabel_sequential(first_augmented, next_id)
     _write_slice(out, axis, first_idx, first_global)
     prev_global = first_global
     if bar is not None:
         bar.update(1)
 
-    for idx, current in slice_iter[1:]:
+    for pos, (idx, current) in enumerate(slice_iter[1:], start=1):
+        current_fg = fg_iter[pos][1] if fg_iter is not None else None
+        current_augmented = _augment_with_unlabeled_components(current, current_fg)
         new_slice = np.zeros_like(current, dtype=np.uint32)
 
-        cur_labels = np.unique(current)
+        cur_labels = np.unique(current_augmented)
         cur_labels = cur_labels[cur_labels != 0]
 
         # Compute overlap table: rows = current labels, cols = best prev IDs
         candidates = []  # (overlap, ratio, cur_lbl, prev_id)
         for cur_lbl in cur_labels:
-            mask = current == cur_lbl
+            mask = current_augmented == cur_lbl
             cur_size = int(mask.sum())
             overlap_region = prev_global[mask]
             overlap_region = overlap_region[overlap_region != 0]
@@ -152,7 +196,7 @@ def propagate_labels(
                 next_id += 1
 
         for cur_lbl, gid in assignments.items():
-            new_slice[current == cur_lbl] = gid
+            new_slice[current_augmented == cur_lbl] = gid
 
         _write_slice(out, axis, idx, new_slice)
         prev_global = new_slice

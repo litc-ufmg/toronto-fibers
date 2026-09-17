@@ -3,7 +3,7 @@ Fiber-level measurements and plots for 3D labeled volumes.
 
 The expected input is a 3D integer array where each non-zero label is one
 fiber ID. For each fiber, this module computes:
-    - voxel count (length proxy by number of pixels/voxels)
+    - skeleton voxel count (length proxy by number of skeleton voxels)
     - EP-EP Euclidean length from skeleton endpoints
     - orientation angles relative to X, Y and Z axes
 """
@@ -15,6 +15,7 @@ import matplotlib
 import numpy as np
 from scipy.ndimage import convolve
 from skimage.morphology import skeletonize
+from matplotlib.ticker import MaxNLocator, StrMethodFormatter
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -22,6 +23,30 @@ import matplotlib.pyplot as plt
 
 _N26 = np.ones((3, 3, 3), dtype=np.uint8)
 _N26[1, 1, 1] = 0
+
+_PLOT_STYLE = {
+    "figure.facecolor": "white",
+    "axes.facecolor": "#fcfcfc",
+    "axes.edgecolor": "#303030",
+    "axes.grid": True,
+    "axes.grid.axis": "y",
+    "grid.color": "#d8d8d8",
+    "grid.linestyle": "-",
+    "grid.alpha": 0.45,
+    "axes.titleweight": "semibold",
+    "axes.labelweight": "regular",
+    "font.family": "serif",
+    "font.serif": ["DejaVu Serif", "Times New Roman", "Times"],
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "legend.frameon": False,
+}
+
+
+def _format_count_axis(ax):
+    """Formats y-axis ticks for histogram counts."""
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
 
 
 def _find_endpoints_3d(skeleton):
@@ -81,18 +106,19 @@ def measure_fibers(labeled_volume, voxel_size=(1.0, 1.0, 1.0)):
 
     for label_id in labels:
         mask = labeled_volume == label_id
-        voxel_count = int(mask.sum())
-        if voxel_count == 0:
+        if not np.any(mask):
             continue
 
         coords = np.argwhere(mask)
-        coords_phys = coords * scale
 
-        # Compute EP-EP length from a local skeleton for this component.
+        # Compute all length features from a local skeleton for this component.
         lo = coords.min(axis=0)
         hi = coords.max(axis=0) + 1
         sub = mask[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]]
         sub_skel = skeletonize(sub)
+        skel_local = np.argwhere(sub_skel)
+        voxel_count = int(len(skel_local))
+        skel_phys = (skel_local + lo) * scale if voxel_count else np.empty((0, 3), dtype=float)
         endpoints_local = _find_endpoints_3d(sub_skel)
 
         if len(endpoints_local) >= 2:
@@ -102,19 +128,19 @@ def measure_fibers(labeled_volume, voxel_size=(1.0, 1.0, 1.0)):
                 vec = endpoints_phys[j] - endpoints_phys[i]
                 direction = vec / ep_ep_length
             else:
-                direction = _principal_axis(coords_phys)
-                proj = coords_phys @ direction
-                ep_ep_length = float(proj.max() - proj.min())
+                direction = _principal_axis(skel_phys)
+                proj = skel_phys @ direction
+                ep_ep_length = float(proj.max() - proj.min()) if len(proj) else 0.0
         else:
-            # Fallback for closed loops or degenerate tiny components.
-            direction = _principal_axis(coords_phys)
-            proj = coords_phys @ direction
+            # Skeleton-only fallback for closed loops or degenerate tiny components.
+            direction = _principal_axis(skel_phys)
+            proj = skel_phys @ direction
             ep_ep_length = float(proj.max() - proj.min()) if len(proj) else 0.0
 
         # Angles to axis directions in ZYX convention.
-        angle_z = float(np.degrees(np.arccos(np.clip(abs(direction[0]), 0.0, 1.0))))
+        angle_x = float(np.degrees(np.arccos(np.clip(abs(direction[0]), 0.0, 1.0))))
         angle_y = float(np.degrees(np.arccos(np.clip(abs(direction[1]), 0.0, 1.0))))
-        angle_x = float(np.degrees(np.arccos(np.clip(abs(direction[2]), 0.0, 1.0))))
+        angle_z = float(np.degrees(np.arccos(np.clip(abs(direction[2]), 0.0, 1.0))))
 
         records.append(
             {
@@ -153,27 +179,41 @@ def save_measurements_csv(records, output_csv_path):
 
 
 def plot_length_histograms(records, output_path, bins=30):
-    """Plots side-by-side histograms for voxel-count and EP-EP lengths."""
+    """Plots histogram for EP-EP Euclidean lengths only."""
     if not records:
         return
 
-    voxel_lengths = [r["voxel_count"] for r in records]
-    ep_ep_lengths = [r["ep_ep_length"] for r in records]
+    ep_ep_lengths = np.asarray([r["ep_ep_length"] for r in records], dtype=float)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    axes[0].hist(voxel_lengths, bins=bins, color="#1f77b4", edgecolor="black")
-    axes[0].set_title("Fiber Length by Voxel Count")
-    axes[0].set_xlabel("Length (voxels)")
-    axes[0].set_ylabel("Count")
+    with plt.style.context("seaborn-v0_8-whitegrid"), matplotlib.rc_context(_PLOT_STYLE):
+        fig, ax = plt.subplots(1, 1, figsize=(7, 4.8), dpi=160)
+        ax.hist(
+            ep_ep_lengths,
+            bins=bins,
+            color="#2a9d8f",
+            edgecolor="#202020",
+            linewidth=0.6,
+            alpha=0.88,
+        )
+        mean_v = float(np.mean(ep_ep_lengths))
+        median_v = float(np.median(ep_ep_lengths))
+        ax.axvline(mean_v, color="#8e2a2a", linestyle="--", linewidth=1.2, label=f"Mean: {mean_v:.2f}")
+        ax.axvline(
+            median_v,
+            color="#5c3c92",
+            linestyle=":",
+            linewidth=1.6,
+            label=f"Median: {median_v:.2f}",
+        )
+        ax.set_title("Fiber Length by Endpoint Distance")
+        ax.set_xlabel("Length (physical units)")
+        ax.set_ylabel("Count")
+        _format_count_axis(ax)
+        ax.legend(loc="upper right", fontsize=9)
 
-    axes[1].hist(ep_ep_lengths, bins=bins, color="#ff7f0e", edgecolor="black")
-    axes[1].set_title("Fiber Length by EP-EP Euclidean Distance")
-    axes[1].set_xlabel("Length (physical units)")
-    axes[1].set_ylabel("Count")
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
 
 
 def plot_orientation_histograms(records, output_path, bins=18):
@@ -181,25 +221,54 @@ def plot_orientation_histograms(records, output_path, bins=18):
     if not records:
         return
 
-    angles_x = [r["angle_x"] for r in records]
-    angles_y = [r["angle_y"] for r in records]
-    angles_z = [r["angle_z"] for r in records]
+    angles_x = np.asarray([r["angle_x"] for r in records], dtype=float)
+    angles_y = np.asarray([r["angle_y"] for r in records], dtype=float)
+    angles_z = np.asarray([r["angle_z"] for r in records], dtype=float)
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    for ax, values, axis_name, color in (
-        (axes[0], angles_x, "X", "#2ca02c"),
-        (axes[1], angles_y, "Y", "#d62728"),
-        (axes[2], angles_z, "Z", "#9467bd"),
-    ):
-        ax.hist(values, bins=bins, range=(0, 90), color=color, edgecolor="black")
-        ax.set_xlim(0, 90)
-        ax.set_title(f"Orientation Relative to {axis_name} Axis")
-        ax.set_xlabel("Angle (degrees)")
-        ax.set_ylabel("Count")
+    if isinstance(bins, int):
+        bins = np.linspace(0.0, 90.0, bins + 1)
 
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+    with plt.style.context("seaborn-v0_8-whitegrid"), matplotlib.rc_context(_PLOT_STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4.8), dpi=160, sharey=True)
+        for ax, values, axis_name, color in (
+            (axes[0], angles_x, "X", "#3b6fb6"),
+            (axes[1], angles_y, "Y", "#c06c2f"),
+            (axes[2], angles_z, "Z", "#4f8a3b"),
+        ):
+            weights = np.full(values.shape, 100.0 / max(len(values), 1), dtype=float)
+            ax.hist(
+                values,
+                bins=bins,
+                range=(0, 90),
+                weights=weights,
+                color=color,
+                edgecolor="#1f1f1f",
+                linewidth=0.6,
+                alpha=0.86,
+            )
+            mean_v = float(np.mean(values))
+            std_v = float(np.std(values))
+            ax.axvline(mean_v, color="#7a1f4b", linestyle="--", linewidth=1.2)
+            ax.text(
+                0.98,
+                0.96,
+                f"mean={mean_v:.1f}\nstd={std_v:.1f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=9,
+                bbox={"facecolor": "white", "alpha": 0.72, "edgecolor": "none", "pad": 2.0},
+            )
+            ax.set_xlim(0, 90)
+            ax.set_title(f"Orientation Relative to {axis_name} Axis")
+            ax.set_xlabel("Angle (deg)")
+
+        axes[0].set_ylabel("Fibers (%)")
+        fig.suptitle("Fiber Orientation Distributions", y=1.03)
+
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
 
 
 def analyze_and_save(labeled_volume, output_dir, prefix="fiber", voxel_size=(1.0, 1.0, 1.0)):

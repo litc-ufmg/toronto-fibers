@@ -18,14 +18,14 @@ import os
 
 import numpy as np
 import tifffile
+import utils.reconstruction as recon
 from scipy.ndimage import binary_opening, convolve
 from skimage.morphology import skeletonize
 
 import utils.io as custom_io
-import utils.metrics as metrics
 import utils.preprocessing as prep
 import utils.segmentation as seg2d
-import utils.reconstruction as recon
+from utils import metrics
 
 
 def generate_synthetic_crossing():
@@ -58,7 +58,9 @@ def skeleton_with_red_junctions(binary_volume):
 
     kernel = np.ones((3, 3, 3), dtype=np.uint8)
     kernel[1, 1, 1] = 0
-    neighbor_count = convolve(skeleton_3d.astype(np.uint8), kernel, mode="constant", cval=0)
+    neighbor_count = convolve(
+        skeleton_3d.astype(np.uint8), kernel, mode="constant", cval=0
+    )
     junction_mask = skeleton_3d & (neighbor_count >= 3)
 
     skeleton_rgb = np.zeros(skeleton_3d.shape + (3,), dtype=np.uint8)
@@ -124,12 +126,12 @@ def run_pipeline(
         print("[1/5] Image path not provided or not found. Using synthetic data.")
         volume = generate_synthetic_crossing()
 
+    if image_path == "data/PPGF40.tif":
+        volume = volume[:, 150:820, 129:491]
+
     # 2. CUBIC CROP (optional)
     if cube_edge is not None:
-        print(
-            f"[2/5] Extracting {cube_position} cube "
-            f"of edge {cube_edge} voxels..."
-        )
+        print(f"[2/5] Extracting {cube_position} cube of edge {cube_edge} voxels...")
         volume = prep.select_cube_region(volume, cube_edge, cube_position)
     else:
         print("[2/5] No cube_edge given. Using the full volume.")
@@ -146,7 +148,9 @@ def run_pipeline(
 
     # 4. 3D SKELETON + JUNCTION MARKING
     print("[4/6] Computing 3D skeleton and marking junctions (red)...")
-    skeleton_3d, junction_mask, skeleton_rgb = skeleton_with_red_junctions(binary_volume)
+    skeleton_3d, junction_mask, skeleton_rgb = skeleton_with_red_junctions(
+        binary_volume
+    )
     print(
         "      - Skeleton voxels: "
         f"{int(skeleton_3d.sum())} | Junction voxels: {int(junction_mask.sum())}"
@@ -170,7 +174,6 @@ def run_pipeline(
     global_labels = recon.propagate_labels(
         slicewise_fibers,
         axis=slicing_axis,
-        foreground_mask=binary_volume,
         min_overlap=propagation_min_overlap,
         min_overlap_ratio=propagation_min_overlap_ratio,
     )
@@ -202,13 +205,13 @@ if __name__ == "__main__":
     sample_path = paths[idx]
 
     # Select "edge", "intermediate" or "center".
-    cube_edge = 200
+    cube_edge = 100
     cube_position = "center"
     slicing_axis = "z"
     max_angle = 45
-    min_ske = 10
+    min_ske = 20
     min_branch_length = 10
-    local_range = 12
+    local_range = 20
 
     (
         raw_extracted_volume,

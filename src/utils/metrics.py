@@ -138,9 +138,9 @@ def measure_fibers(labeled_volume, voxel_size=(1.0, 1.0, 1.0)):
             ep_ep_length = float(proj.max() - proj.min()) if len(proj) else 0.0
 
         # Angles to axis directions in ZYX convention.
-        angle_x = float(np.degrees(np.arccos(np.clip(abs(direction[0]), 0.0, 1.0))))
+        angle_x = float(np.degrees(np.arccos(np.clip(abs(direction[2]), 0.0, 1.0))))
         angle_y = float(np.degrees(np.arccos(np.clip(abs(direction[1]), 0.0, 1.0))))
-        angle_z = float(np.degrees(np.arccos(np.clip(abs(direction[2]), 0.0, 1.0))))
+        angle_z = float(np.degrees(np.arccos(np.clip(abs(direction[0]), 0.0, 1.0))))
 
         records.append(
             {

@@ -194,7 +194,7 @@ if __name__ == "__main__":
         "To visualize the results in Napari, run the following command in PowerShell:"
     )
     print(
-        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/labeled_fibers_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res"
+        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/labeled_fibers_test.tif C:\\Users\\Homero\\documents\\LITC\\Toronto_Fibers\\data\\3d-res"
     )
     print("napari data/3d-res/labeled_fibers_test.tif --layer-type labels")
     print("=======================================================================")
@@ -202,7 +202,7 @@ if __name__ == "__main__":
         "To visualize the cropped volume in Napari, run the following command in PowerShell:"
     )
     print(
-        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/cropped_vol_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res"
+        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/cropped_vol_test.tif C:\\Users\\Homero\\documents\\LITC\\Toronto_Fibers\\data\\3d-res"
     )
     print("napari data/3d-res/cropped_vol_test.tif")
     print("=======================================================================")
@@ -210,7 +210,7 @@ if __name__ == "__main__":
         "To visualize the binary image in Napari, run the following command in PowerShell:"
     )
     print(
-        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/binary_mask_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res"
+        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/binary_mask_test.tif C:\\Users\\Homero\\documents\\LITC\\Toronto_Fibers\\data\\3d-res"
     )
     print("napari data/3d-res/binary_mask_test.tif --layer-type labels")
     print("=======================================================================")
@@ -218,7 +218,7 @@ if __name__ == "__main__":
         "To visualize the prunned skeleton in Napari, run the following command in PowerShell:"
     )
     print(
-        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/pruned_skel_test.tif C:\\Users\Homero\documents\LITC\Toronto_Fibers\data\\3d-res"
+        "scp homero_castro@litc59:/home/homero_castro/toronto/results/fiber_img/3d-res/pruned_skel_test.tif C:\\Users\\Homero\\documents\\LITC\\Toronto_Fibers\\data\\3d-res"
     )
     print("napari data/3d-res/pruned_skel_test.tif")
     print("=======================================================================\n")

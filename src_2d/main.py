@@ -151,7 +151,7 @@ if __name__ == "__main__":
     sample_path = paths[idx]
 
     # Select "edge", "intermediate" or "center".
-    cube_edge = 100
+    cube_edge = 200
     cube_position = "center"
     slicing_axis = "z"
     max_angle = 45

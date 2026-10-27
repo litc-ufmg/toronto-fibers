@@ -1,7 +1,7 @@
 """
 End-to-end test runner for the 2D fiber segmentation + 3D label propagation
 pipeline. Mirrors ``src/testing.py`` but uses the slice-wise 2D method
-described in ``notebooks/fiber_seg_2D.ipynb`` and ``tex/2d_method.tex``.
+described in ``notebooks/fiber_seg_2D.ipynb``.
 
 Pipeline
 --------
@@ -15,17 +15,25 @@ Pipeline
 """
 
 import os
+import sys
+from pathlib import Path
 
 import numpy as np
 import tifffile
-import utils.reconstruction as recon
-from scipy.ndimage import binary_opening, convolve
-from skimage.morphology import skeletonize
 
-import utils.io as custom_io
-import utils.preprocessing as prep
-import utils.segmentation as seg2d
-from utils import metrics
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from fiber_analysis.config import SliceWiseConfig
+from fiber_analysis.pipelines import (
+    SliceWiseFiberPipeline,
+    skeleton_with_red_junctions,
+)
+from src_2d.utils import io as custom_io
+from src_2d.utils import metrics
+from src_2d.utils import preprocessing as prep
+
+__all__ = ["generate_synthetic_crossing", "run_pipeline", "skeleton_with_red_junctions"]
 
 
 def generate_synthetic_crossing():
@@ -38,36 +46,6 @@ def generate_synthetic_crossing():
     vol[23:27, 23:27, 10:40] = 255  # Fiber along X
     vol[23:27, 10:40, 23:27] = 255  # Fiber along Y
     return vol
-
-
-def skeleton_with_red_junctions(binary_volume):
-    """
-    Builds a 3D skeleton and an RGB overlay where junction voxels are red.
-
-    Args:
-        binary_volume (np.ndarray): 3D binary fiber mask.
-
-    Returns:
-        tuple: (skeleton_3d, junction_mask, skeleton_rgb)
-            skeleton_3d: bool 3D skeleton volume.
-            junction_mask: bool 3D mask of voxels with >= 3 neighbors.
-            skeleton_rgb: uint8 RGB volume (Z, Y, X, 3), skeleton in white,
-                junctions in red.
-    """
-    skeleton_3d = skeletonize(binary_volume).astype(bool)
-
-    kernel = np.ones((3, 3, 3), dtype=np.uint8)
-    kernel[1, 1, 1] = 0
-    neighbor_count = convolve(
-        skeleton_3d.astype(np.uint8), kernel, mode="constant", cval=0
-    )
-    junction_mask = skeleton_3d & (neighbor_count >= 3)
-
-    skeleton_rgb = np.zeros(skeleton_3d.shape + (3,), dtype=np.uint8)
-    skeleton_rgb[skeleton_3d] = (255, 255, 255)
-    skeleton_rgb[junction_mask] = (255, 0, 0)
-
-    return skeleton_3d, junction_mask, skeleton_rgb
 
 
 def run_pipeline(
@@ -85,7 +63,10 @@ def run_pipeline(
     propagation_min_overlap_ratio=0.0,
 ):
     """
-    Runs the full 2D-slicewise + 3D-propagation pipeline.
+    Load/select an image and delegate to ``SliceWiseFiberPipeline``.
+
+    The original defaults, sample-specific crop, synthetic fallback, and
+    seven-array tuple are preserved. The class API returns named results.
 
     Args:
         image_path (str | None): Path to the micro-CT TIFF.
@@ -136,61 +117,26 @@ def run_pipeline(
     else:
         print("[2/5] No cube_edge given. Using the full volume.")
 
-    # Keep the grayscale input volume used by the pipeline for comparisons.
-    raw_extracted_volume = volume.copy()
-
-    # 3. BINARIZATION + MORPHOLOGICAL OPENING
-    print("[3/5] Binarizing (Otsu) and applying morphological opening...")
-    binary_volume, threshold = prep.binarize_volume_otsu(volume)
-    print(f"      - Otsu threshold: {threshold}")
-    binary_volume = binary_opening(binary_volume)
-    print(f"      - Foreground voxels: {int(binary_volume.sum())}")
-
-    # 4. 3D SKELETON + JUNCTION MARKING
-    print("[4/6] Computing 3D skeleton and marking junctions (red)...")
-    skeleton_3d, junction_mask, skeleton_rgb = skeleton_with_red_junctions(
-        binary_volume
-    )
-    print(
-        "      - Skeleton voxels: "
-        f"{int(skeleton_3d.sum())} | Junction voxels: {int(junction_mask.sum())}"
-    )
-
-    # 5. SLICE-WISE 2D SEGMENTATION
-    print(f"[5/6] Slice-wise 2D segmentation along axis '{slicing_axis}'...")
-    slicewise_fibers, _ = seg2d.segment_volume_slicewise(
-        binary_volume,
-        axis=slicing_axis,
+    config = SliceWiseConfig(
+        slicing_axis=slicing_axis,
         max_angle_deviation=max_angle_deviation,
         remove_small_skeletons=remove_small_skeletons,
         min_skeleton_size=min_skeleton_size,
         min_branch_length=min_branch_length,
         local_analysis=local_analysis,
         local_range=local_range,
+        propagation_min_overlap=propagation_min_overlap,
+        propagation_min_overlap_ratio=propagation_min_overlap_ratio,
     )
-
-    # 6. 3D LABEL PROPAGATION
-    print(f"[6/6] Propagating labels across consecutive '{slicing_axis}' slices...")
-    global_labels = recon.propagate_labels(
-        slicewise_fibers,
-        axis=slicing_axis,
-        min_overlap=propagation_min_overlap,
-        min_overlap_ratio=propagation_min_overlap_ratio,
-    )
-
-    n_fibers = int(global_labels.max())
-    print("========================================")
-    print(f"PIPELINE FINISHED: {n_fibers} unique fibers after propagation.")
-    print("========================================")
-
+    result = SliceWiseFiberPipeline(config).segment(volume)
     return (
-        raw_extracted_volume,
-        binary_volume,
-        skeleton_3d,
-        junction_mask,
-        skeleton_rgb,
-        slicewise_fibers,
-        global_labels,
+        result.raw_volume,
+        result.binary_mask,
+        result.skeleton_3d,
+        result.junction_mask,
+        result.skeleton_rgb,
+        result.slicewise_labels,
+        result.labels,
     )
 
 

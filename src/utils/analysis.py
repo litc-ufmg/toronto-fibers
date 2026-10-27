@@ -105,7 +105,9 @@ def calculate_branch_direction(path_coords, junction_coords, num_voxels=12):
         return direction
     return direction / norm
 
-def filter_skeleton(skeleton_3d_img, tam_min=5, remove_isolated=True, isolated_min=15):
+def filter_skeleton(
+    skeleton_3d_img, tam_min=5, remove_isolated=True, isolated_min=15, *, verbose=True
+):
     """
     Removes small noise artifacts from the skeleton.
     Filters out short spurs (Junction-to-Endpoint) and floating debris (Endpoint-to-Endpoint).
@@ -115,11 +117,11 @@ def filter_skeleton(skeleton_3d_img, tam_min=5, remove_isolated=True, isolated_m
         tam_min (int): Minimum length (in voxels) for a spur to be kept.
         remove_isolated (bool): If True, also removes small floating skeleton pieces.
         isolated_min (int): Minimum length for an isolated branch to be kept.
+        verbose (bool): Print removed-branch counts.
         
     Returns:
         np.ndarray: Filtered skeleton image.
     """
-    print("------------FILTERING THE SKELETON----------")
     _skeleton_3d = skeleton_3d_img.copy()
     skeleton_obj = Skeleton(_skeleton_3d)
 
@@ -158,10 +160,16 @@ def filter_skeleton(skeleton_3d_img, tam_min=5, remove_isolated=True, isolated_m
             _skeleton_3d[z, y, x] = False
             n_iso_rm += 1
 
-    print(f"     - {n_spurs_rm} spurs (<= {tam_min} voxels) removed.")
-    if remove_isolated:
-        print(f"     - {n_iso_rm} isolated branches (<= {isolated_min} voxels) removed.")
-    print("------------FILTERING ENDED---------------\n")
+    if verbose:
+        print(
+            f"      Removed JP-EP branches (< {tam_min} voxels): {n_spurs_rm}",
+            flush=True,
+        )
+        if remove_isolated:
+            print(
+                f"      Removed isolated EP-EP branches (< {isolated_min} voxels): {n_iso_rm}",
+                flush=True,
+            )
     
     return _skeleton_3d
 
@@ -218,7 +226,10 @@ def find_continuous_pairs(vectors, branches_ids, min_angle=75.0):
     return paired_branches, branches_to_prune
 
 
-def prune_skeleton(skeleton_3d_img, local_search=True, local_range=12, min_angle=75.0, retraction_dist=4):
+def prune_skeleton(
+    skeleton_3d_img, local_search=True, local_range=12, min_angle=75.0,
+    retraction_dist=4, *, verbose=True
+):
     """
     Prunes the skeleton by analyzing continuity at junction points.
     Uses a single topology snapshot from start to end (no iterative re-analysis).
@@ -230,6 +241,7 @@ def prune_skeleton(skeleton_3d_img, local_search=True, local_range=12, min_angle
         local_range (int): Number of voxels to use for the PCA line fitting.
         min_angle (float): Threshold angle to accept two branches as continuous.
         retraction_dist (int): Number of voxels to delete when pruning, to pull the stub away from the junction.
+        verbose (bool): Print the number of junctions analyzed.
         
     Returns:
         np.ndarray: Pruned skeleton image.
@@ -242,7 +254,8 @@ def prune_skeleton(skeleton_3d_img, local_search=True, local_range=12, min_angle
         return _skeleton_3d
 
     junction_points_ids = np.where(skeleton_obj.degrees >= 3)[0]
-    print(f"{len(junction_points_ids)} junction points found for pruning.")
+    if verbose:
+        print(f"      Junctions analyzed: {len(junction_points_ids)}", flush=True)
 
     for junction_id in junction_points_ids:
         junction_coords = skeleton_obj.coordinates[junction_id]

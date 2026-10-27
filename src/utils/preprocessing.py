@@ -2,7 +2,7 @@ import numpy as np
 from skimage.filters import threshold_otsu
 import matplotlib.pyplot as plt
 
-def auto_crop_volume(volume, threshold=0, padding=0):
+def auto_crop_volume(volume, threshold=0, padding=0, *, verbose=True):
     """
     Automatically crops the 3D volume to remove empty (black) margins.
     
@@ -13,6 +13,7 @@ def auto_crop_volume(volume, threshold=0, padding=0):
         volume (np.ndarray): Input 3D image volume.
         threshold (int/float): Intensity value to consider as background (default 0).
         padding (int): Number of extra pixels to keep around the object (default 0).
+        verbose (bool): Print crop details. Empty-volume warnings remain visible.
         
     Returns:
         np.ndarray: Cropped volume.
@@ -46,7 +47,12 @@ def auto_crop_volume(volume, threshold=0, padding=0):
     x_min = max(0, x_min - padding)
     x_max = min(volume.shape[2], x_max + 1 + padding)
 
-    print(f"Auto-crop applied. Original shape: {volume.shape} -> New shape: {(z_max-z_min, y_max-y_min, x_max-x_min)}")
+    if verbose:
+        print(
+            f"      Crop (Z, Y, X): {volume.shape} -> "
+            f"{(z_max-z_min, y_max-y_min, x_max-x_min)}",
+            flush=True,
+        )
 
     # Return the sliced volume
     return volume[z_min:z_max, y_min:y_max, x_min:x_max]
